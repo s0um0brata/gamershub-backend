@@ -67,6 +67,16 @@ export const placeOrder = asyncHandler(async (req, res) => {
   }
 
   const normalizedKey = idempotencyKey.trim();
+  const requestedGameId = req.body?.gameId;
+  const isBuyNow = requestedGameId !== undefined;
+
+  if (
+    isBuyNow &&
+    (typeof requestedGameId !== "string" ||
+      !mongoose.Types.ObjectId.isValid(requestedGameId))
+  ) {
+    throw new ApiError(400, "A valid game ID is required");
+  }
 
   const existingOrder = await Order.findOne({
     user: req.user._id,
@@ -137,11 +147,13 @@ export const placeOrder = asyncHandler(async (req, res) => {
         );
       }
 
-      if (!user.cart || user.cart.length === 0) {
+      const cartGameIds = isBuyNow
+        ? [new mongoose.Types.ObjectId(requestedGameId)]
+        : user.cart;
+
+      if (!cartGameIds || cartGameIds.length === 0) {
         throw new ApiError(400, "Your cart is empty");
       }
-
-      const cartGameIds = user.cart;
 
       // 2. Fetch only published games from the database
       const games = await Game.find({
