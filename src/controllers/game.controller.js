@@ -53,11 +53,26 @@ const getAllGames = asyncHandler(async (req, res) => {
     query.categories = category._id;
   }
 
-  // Search by title or description
+  // Search by game title, description, or category name.
   if (req.query.search?.trim()) {
-    query.$text = {
-      $search: req.query.search.trim(),
-    };
+    const searchTerm = req.query.search.trim();
+
+    const matchingCategories = await Category.find({
+      isActive: true,
+      name: { $regex: searchTerm, $options: "i" },
+    }).select("_id");
+
+    const categoryIds = matchingCategories.map((category) => category._id);
+
+    const searchConditions = [{ $text: { $search: searchTerm } }];
+
+    if (categoryIds.length > 0) {
+      searchConditions.push({
+        categories: { $in: categoryIds },
+      });
+    }
+
+    query.$or = searchConditions;
   }
 
   // Filter by genre
