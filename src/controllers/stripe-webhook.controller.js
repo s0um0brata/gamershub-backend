@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 import stripe from "../config/stripe.config.js";
 import Order from "../models/Order.model.js";
+import User from "../models/User.model.js";
 import StripeWebhookEvent from "../models/StripeWebhookEvent.model.js";
 
 export const handleStripeWebhook = async (req, res) => {
@@ -107,60 +108,78 @@ export const handleStripeWebhook = async (req, res) => {
         );
       }
 
-      // 7. Never overwrite an existing successful payment.
-      if (order.paymentStatus === "paid") {
-        return;
-      }
+      // 7. Update payment status only if the order is not already paid.
+      if (order.paymentStatus !== "paid") {
+        // 8. Never automatically pay a cancelled or failed order.
+        if (
+          order.orderStatus !== "pending" ||
+          order.paymentStatus !== "pending"
+        ) {
+          console.error(
+            "Payment received for an ineligible order:",
+            order.orderNumber,
+          );
 
-      // 8. Never automatically pay a cancelled or failed order.
-      if (
-        order.orderStatus !== "pending" ||
-        order.paymentStatus !== "pending"
-      ) {
-        console.error(
-          "Payment received for an ineligible order:",
-          order.orderNumber,
+          return;
+        }
+
+        // 9. Atomically mark the order as paid.
+        const paymentIntentId =
+          typeof checkoutSession.payment_intent === "string"
+            ? checkoutSession.payment_intent
+            : checkoutSession.payment_intent?.id;
+
+        const updatedOrder = await Order.findOneAndUpdate(
+          {
+            _id: order._id,
+            orderStatus: "pending",
+            paymentStatus: "pending",
+            stripeCheckoutSessionId: checkoutSession.id,
+          },
+          {
+            $set: {
+              paymentStatus: "paid",
+              paymentId: paymentIntentId || checkoutSession.id,
+              stripePaymentIntentId: paymentIntentId || null,
+              paidAt: new Date(),
+            },
+          },
+          {
+            new: true,
+            runValidators: true,
+            session: mongoSession,
+          },
         );
 
-        return;
+        if (!updatedOrder) {
+          throw new Error(
+            `Order payment state changed during processing: ${order.orderNumber}`,
+          );
+        }
       }
 
-      // 9. Atomically mark the order as paid.
-      const paymentIntentId =
-        typeof checkoutSession.payment_intent === "string"
-          ? checkoutSession.payment_intent
-          : checkoutSession.payment_intent?.id;
+      // 10. Remove only the purchased games from the user's cart.
+      const purchasedGameIds = order.items.map((item) => item.game);
 
-      const updatedOrder = await Order.findOneAndUpdate(
+      const cartUpdate = await User.updateOne(
+        { _id: order.user },
         {
-          _id: order._id,
-          orderStatus: "pending",
-          paymentStatus: "pending",
-          stripeCheckoutSessionId: checkoutSession.id,
-        },
-        {
-          $set: {
-            paymentStatus: "paid",
-            paymentId: paymentIntentId || checkoutSession.id,
-            stripePaymentIntentId: paymentIntentId || null,
-            paidAt: new Date(),
+          $pull: {
+            cart: { $in: purchasedGameIds },
           },
         },
-        {
-          new: true,
-          runValidators: true,
-          session: mongoSession,
-        },
+        { session: mongoSession },
       );
 
-      if (!updatedOrder) {
-        throw new Error(
-          `Order payment state changed during processing: ${order.orderNumber}`,
-        );
-      }
+      console.log("Cart cleanup result:", {
+        orderNumber: order.orderNumber,
+        purchasedGameIds,
+        matchedUsers: cartUpdate.matchedCount,
+        modifiedUsers: cartUpdate.modifiedCount,
+      });
 
       console.log(
-        `Payment verified successfully for order ${updatedOrder.orderNumber}`,
+        `Payment verified successfully for order ${order.orderNumber}`,
       );
     });
 
