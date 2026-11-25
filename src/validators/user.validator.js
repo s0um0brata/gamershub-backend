@@ -14,7 +14,7 @@ export const updateProfileValidation = [
     .withMessage("Please enter a valid email"),
 
   body("phoneNumber")
-    .optional()
+    .optional({ values: "falsy" })
     .trim()
     .isMobilePhone("en-IN")
     .withMessage("Please enter a valid Indian mobile number"),
