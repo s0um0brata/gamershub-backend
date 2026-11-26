@@ -57,22 +57,21 @@ const getAllGames = asyncHandler(async (req, res) => {
   if (req.query.search?.trim()) {
     const searchTerm = req.query.search.trim();
 
+    // Escape special regex characters
+    const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
     const matchingCategories = await Category.find({
       isActive: true,
-      name: { $regex: searchTerm, $options: "i" },
+      name: { $regex: escapedSearchTerm, $options: "i" },
     }).select("_id");
 
     const categoryIds = matchingCategories.map((category) => category._id);
 
-    const searchConditions = [{ $text: { $search: searchTerm } }];
-
-    if (categoryIds.length > 0) {
-      searchConditions.push({
-        categories: { $in: categoryIds },
-      });
-    }
-
-    query.$or = searchConditions;
+    query.$or = [
+      { title: { $regex: escapedSearchTerm, $options: "i" } },
+      { description: { $regex: escapedSearchTerm, $options: "i" } },
+      ...(categoryIds.length > 0 ? [{ categories: { $in: categoryIds } }] : []),
+    ];
   }
 
   // Filter by genre
